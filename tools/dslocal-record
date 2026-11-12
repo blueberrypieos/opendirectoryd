@@ -1,0 +1,256 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 The Blueberry Pie OS Authors
+#
+# usage: dslocal-record user NODE --name NAME --uid UID --gid GID
+#            [--realname TEXT] [--home DIR] [--shell PATH] [--uuid UUID]
+#            [--password-stdin | --password-file FILE] [--iterations N]
+#            [--salt-seed TEXT] [--disabled] [--attr KEY=VALUE]...
+#        dslocal-record group NODE --name NAME --gid GID
+#            [--realname TEXT] [--uuid UUID] [--member USER]...
+#            [--member-uuid UUID]... [--attr KEY=VALUE]...
+#        dslocal-record member NODE --group GROUP --user USER [--from FILE]
+#
+# Writes NODE/users/NAME.plist or NODE/groups/NAME.plist, mode 0600, as
+# opendirectoryd reads them. NODE is a node directory, such as
+# ROOT/var/db/dslocal/nodes/Default. The record is a binary property list:
+# a dictionary of attribute names to arrays of strings.
+#
+# --uuid sets GeneratedUID. Without it, a user gets FFFFEEEE-DDDD-CCCC-BBBB-AAAA
+# followed by the uid in hex, and a group ABCDEFAB-CDEF-ABCD-EFAB-CDEF followed
+# by the gid.
+#
+# --password-stdin reads the password from the first line of standard input,
+# --password-file from the first line of FILE. The user then gets a
+# SALTED-SHA512-PBKDF2 ShadowHashData with N iterations, 40000 by default, its
+# AuthenticationAuthority and passwd "********". Without a password the user
+# has passwd "*" and cannot log in with a password. --disabled marks the
+# account disabled. The salt is random, unless --salt-seed makes it the
+# SHA-256 of TEXT, so that the same input gives the same record. Use it only
+# for a password everyone knows, such as an image's default.
+#
+# --member adds a user name to the group's GroupMembership, the users key,
+# and --member-uuid a GeneratedUID to its GroupMembers, the groupmembers key.
+# --attr appends VALUE to the dslocal key KEY.
+#
+# member adds the user NODE/users/USER.plist to the group
+# NODE/groups/GROUP.plist: its name to users and its GeneratedUID to
+# groupmembers, each once. --from reads the group from FILE instead, if
+# the node has no such group yet.
+
+import argparse
+import hashlib
+import os
+import plistlib
+import re
+import secrets
+import sys
+import uuid
+
+ITERATIONS = 40000
+ENTROPY = 128
+SALT = 32
+AUTHORITY = ";ShadowHash;HASHLIST:<SALTED-SHA512-PBKDF2>"
+NAME_RE = re.compile(r"[^./:\-\x00-\x1f\x7f][^/:\x00-\x1f\x7f]{0,239}")
+
+
+def fail(msg):
+    sys.stderr.write("dslocal-record: %s\n" % msg)
+    sys.exit(1)
+
+
+def ident(text):
+    try:
+        v = int(text, 10)
+    except ValueError:
+        fail("not a number: %s" % text)
+    if v < -2147483648 or v > 4294967295:
+        fail("out of range: %s" % text)
+    return v
+
+
+def compat_uuid(prefix, number):
+    return "%s%08X" % (prefix, number & 0xFFFFFFFF)
+
+
+def check_uuid(text):
+    try:
+        return str(uuid.UUID(text)).upper()
+    except ValueError:
+        fail("not a UUID: %s" % text)
+
+
+def shadow_hash(password, iterations, salt=None):
+    if salt is None:
+        salt = secrets.token_bytes(SALT)
+    entropy = hashlib.pbkdf2_hmac("sha512", password.encode("utf-8"), salt, iterations, ENTROPY)
+    inner = {"SALTED-SHA512-PBKDF2": {"entropy": entropy, "iterations": iterations, "salt": salt}}
+    return plistlib.dumps(inner, fmt=plistlib.FMT_BINARY, sort_keys=True)
+
+
+def read_password(args):
+    if args.password_stdin:
+        line = sys.stdin.readline()
+    elif args.password_file is not None:
+        with open(args.password_file, "r", encoding="utf-8") as f:
+            line = f.readline()
+    else:
+        return None
+    line = line.rstrip("\r\n")
+    if line == "":
+        fail("empty password")
+    return line
+
+
+def extra_attrs(record, attrs):
+    for a in attrs:
+        key, sep, value = a.partition("=")
+        if sep == "" or key == "" or "/" in key:
+            fail("bad --attr: %s" % a)
+        if key in ("ShadowHashData", "authentication_authority", "passwd", "name"):
+            fail("--attr cannot set %s" % key)
+        record.setdefault(key, []).append(value)
+
+
+def write_record(node, kind, name, record):
+    path = os.path.join(node, kind)
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    final = os.path.join(path, name + ".plist")
+    tmp = os.path.join(path, "." + name + ".tmp")
+    data = plistlib.dumps(record, fmt=plistlib.FMT_BINARY, sort_keys=True)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, final)
+    return final
+
+
+def user(args):
+    uid = ident(args.uid)
+    gid = ident(args.gid)
+    record = {
+        "name": [args.name],
+        "uid": [str(uid)],
+        "gid": [str(gid)],
+        "generateduid": [check_uuid(args.uuid) if args.uuid else
+                         compat_uuid("FFFFEEEE-DDDD-CCCC-BBBB-AAAA", uid)],
+        "home": [args.home],
+        "shell": [args.shell],
+        "passwd": ["*"],
+    }
+    if args.realname is not None:
+        record["realname"] = [args.realname]
+    password = read_password(args)
+    prefix = ";DisabledUser;" if args.disabled else ""
+    if password is not None:
+        if args.iterations < 1 or args.iterations > 10000000:
+            fail("bad iteration count")
+        salt = None
+        if args.salt_seed is not None:
+            salt = hashlib.sha256(args.salt_seed.encode("utf-8")).digest()[:SALT]
+        record["ShadowHashData"] = [shadow_hash(password, args.iterations, salt)]
+        record["authentication_authority"] = [prefix + AUTHORITY]
+        record["passwd"] = ["********"]
+    elif args.disabled:
+        record["authentication_authority"] = [prefix]
+    extra_attrs(record, args.attr)
+    return write_record(args.node, "users", args.name, record)
+
+
+def group(args):
+    gid = ident(args.gid)
+    record = {
+        "name": [args.name],
+        "gid": [str(gid)],
+        "generateduid": [check_uuid(args.uuid) if args.uuid else
+                         compat_uuid("ABCDEFAB-CDEF-ABCD-EFAB-CDEF", gid)],
+        "passwd": ["*"],
+    }
+    if args.realname is not None:
+        record["realname"] = [args.realname]
+    if args.member:
+        for m in args.member:
+            if not NAME_RE.fullmatch(m):
+                fail("bad member name: %s" % m)
+        record["users"] = list(args.member)
+    if args.member_uuid:
+        record["groupmembers"] = [check_uuid(u) for u in args.member_uuid]
+    extra_attrs(record, args.attr)
+    return write_record(args.node, "groups", args.name, record)
+
+
+def load_record(path):
+    try:
+        with open(path, "rb") as f:
+            record = plistlib.load(f)
+    except (OSError, plistlib.InvalidFileException) as e:
+        fail("cannot read %s: %s" % (path, e))
+    if not isinstance(record, dict):
+        fail("not a record: %s" % path)
+    return record
+
+
+def member(args):
+    if not NAME_RE.fullmatch(args.user):
+        fail("bad record name: %s" % args.user)
+    user_rec = load_record(os.path.join(args.node, "users", args.user + ".plist"))
+    uuids = user_rec.get("generateduid", [])
+    if len(uuids) != 1:
+        fail("user %s has no GeneratedUID" % args.user)
+    path = os.path.join(args.node, "groups", args.group + ".plist")
+    if not os.path.exists(path) and args.from_file is not None:
+        path = args.from_file
+    record = load_record(path)
+    if record.get("name") != [args.group]:
+        fail("%s is not the group %s" % (path, args.group))
+    for key, value in (("users", args.user), ("groupmembers", check_uuid(uuids[0]))):
+        values = record.setdefault(key, [])
+        if value not in values:
+            values.append(value)
+    return write_record(args.node, "groups", args.group, record)
+
+
+def main():
+    p = argparse.ArgumentParser(prog="dslocal-record")
+    sub = p.add_subparsers(dest="kind", required=True)
+    u = sub.add_parser("user")
+    u.add_argument("node")
+    u.add_argument("--name", required=True)
+    u.add_argument("--uid", required=True)
+    u.add_argument("--gid", required=True)
+    u.add_argument("--realname")
+    u.add_argument("--home", default="/var/empty")
+    u.add_argument("--shell", default="/usr/bin/false")
+    u.add_argument("--uuid")
+    pw = u.add_mutually_exclusive_group()
+    pw.add_argument("--password-stdin", action="store_true")
+    pw.add_argument("--password-file")
+    u.add_argument("--iterations", type=int, default=ITERATIONS)
+    u.add_argument("--salt-seed")
+    u.add_argument("--disabled", action="store_true")
+    u.add_argument("--attr", action="append", default=[])
+    g = sub.add_parser("group")
+    g.add_argument("node")
+    g.add_argument("--name", required=True)
+    g.add_argument("--gid", required=True)
+    g.add_argument("--realname")
+    g.add_argument("--uuid")
+    g.add_argument("--member", action="append", default=[])
+    g.add_argument("--member-uuid", action="append", default=[])
+    g.add_argument("--attr", action="append", default=[])
+    m = sub.add_parser("member")
+    m.add_argument("node")
+    m.add_argument("--group", required=True)
+    m.add_argument("--user", required=True)
+    m.add_argument("--from", dest="from_file")
+    args = p.parse_args()
+    if args.kind == "member":
+        args.name = args.group
+    if not NAME_RE.fullmatch(args.name):
+        fail("bad record name: %s" % args.name)
+    print({"user": user, "group": group, "member": member}[args.kind](args))
+
+
+if __name__ == "__main__":
+    main()

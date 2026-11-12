@@ -1,0 +1,25 @@
+#!/usr/bin/make -f
+# SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 The Blueberry Pie OS Authors
+
+include /usr/share/pietoolchain/rules.mk
+
+CFOD_FRAMEWORKS := $(SYSROOT)/System/Library/Frameworks/OpenDirectory.framework/Frameworks
+
+TOOLS := opendirectoryd dscl
+opendirectoryd_SRCS := $(addprefix opendirectoryd/,api.c attrmap.c backoff.c lookup.c main.c plist.c \
+	resolver.c shadow.c store.c util.c)
+opendirectoryd_DIR := usr/libexec
+opendirectoryd_FLAGS := -std=gnu11
+opendirectoryd_MANS := opendirectoryd/opendirectoryd.8:man8
+dscl_SRCS := dscl/dscl.c opendirectoryd/attrmap.c
+dscl_DIR := usr/bin
+dscl_FLAGS := -std=gnu11 -I$(SRCROOT)/opendirectoryd -F$(CFOD_FRAMEWORKS)
+dscl_LIBS := -F$(CFOD_FRAMEWORKS) -framework CFOpenDirectory -framework CoreFoundation
+dscl_MANS := dscl/dscl.1:man1
+
+include $(PIETOOLCHAIN)/tools.mk
+
+install: install-tools
+
+.PHONY: install

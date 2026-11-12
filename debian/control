@@ -1,0 +1,24 @@
+Source: opendirectoryd
+Section: admin
+Priority: optional
+Maintainer: Maxwell <maxwell@blueberrypieos.com>
+Build-Depends: pietoolchain (>= 0.2.0), opendirectory-dev
+Standards-Version: 4.7.3
+Homepage: https://github.com/blueberrypieos/opendirectoryd
+Vcs-Git: https://github.com/blueberrypieos/opendirectoryd.git
+Vcs-Browser: https://github.com/blueberrypieos/opendirectoryd
+Rules-Requires-Root: no
+
+Package: opendirectoryd
+Architecture: darwin-arm64
+Priority: required
+Depends: blueberry-pie-os-init (>= 2), corefoundation, libsystem, libxpc (>= 0-2), opendirectory
+Breaks: base-files (<< 2)
+Description: directory service daemon and dscl
+ opendirectoryd keeps the local users and groups in
+ /var/db/dslocal/nodes/Default and serves them to the Open Directory
+ framework, to the user and group lookups of the C library and to the
+ membership calls. It checks and changes passwords, which it keeps as
+ salted PBKDF2-SHA512 hashes.
+ .
+ dscl reads and edits the records.

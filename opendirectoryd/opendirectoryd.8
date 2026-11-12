@@ -1,0 +1,242 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 The Blueberry Pie OS Authors
+.Dd November 11, 2026
+.Dt OPENDIRECTORYD 8
+.Os
+.Sh NAME
+.Nm opendirectoryd
+.Nd local directory service daemon
+.Sh SYNOPSIS
+.Nm
+.Op Fl d
+.Sh DESCRIPTION
+.Nm
+keeps the local users and groups and answers for them.
+It serves three Mach services:
+the Open Directory API that the CFOpenDirectory framework uses,
+the user and group lookups of the C library, such as
+.Xr getpwnam 3
+and
+.Xr getgrouplist 3 ,
+and the membership calls of
+.Xr mbr_check_membership 3 .
+Lookups of other kinds, such as services and hosts, are not answered,
+so the C library takes them from the files in
+.Pa /etc .
+.Pp
+.Nm
+runs as root and does not fork.
+.Pa /etc/rc
+starts it in the background.
+It logs through
+.Xr syslog 3 .
+.Pp
+The options are:
+.Bl -tag -width Ds
+.It Fl d
+Log to the standard error instead of
+.Xr syslog 3 .
+.El
+.Ss Nodes
+The node
+.Pa /Local/Default
+holds the records.
+The search node
+.Pa /Search
+and the authentication search node show the same records.
+A record found through
+.Pa /Search
+names
+.Pa /Local/Default
+as its AppleMetaNodeLocation.
+Changes go to
+.Pa /Local/Default
+only.
+.Ss Records
+Each record is a binary property list:
+.Pa /var/db/dslocal/nodes/Default/users/ Ns Ar name Ns Pa .plist
+for a user and
+.Pa /var/db/dslocal/nodes/Default/groups/ Ns Ar name Ns Pa .plist
+for a group.
+It is a dictionary from attribute names to arrays of strings or data.
+The names are the short ones of the local store, which map to the
+standard attributes as follows:
+.Bl -column "authentication_authority" "AuthenticationAuthority" -offset indent
+.It Sy Key Ta Sy Attribute
+.It name Ta RecordName
+.It uid Ta UniqueID
+.It gid Ta PrimaryGroupID
+.It realname Ta RealName
+.It home Ta NFSHomeDirectory
+.It home_loc Ta HomeDirectory
+.It shell Ta UserShell
+.It passwd Ta Password
+.It generateduid Ta GeneratedUID
+.It authentication_authority Ta AuthenticationAuthority
+.It users Ta GroupMembership
+.It groupmembers Ta GroupMembers
+.It nestedgroups Ta NestedGroups
+.El
+.Pp
+Other standard attributes, such as Comment, EMailAddress and Picture,
+have short keys of their own.
+Any other key is the native attribute
+.Li dsAttrTypeNative: Ns Ar key .
+RecordType, AppleMetaNodeLocation and AppleMetaRecordName are not stored.
+Every record a query returns carries RecordType, RecordName and
+AppleMetaNodeLocation.
+.Pp
+A record must have a name.
+Files that are not regular files, files over 1 MiB and files that do
+not parse are left out.
+Files whose names start with a dot are temporary, and are removed when
+.Nm
+starts.
+.Nm
+reads the files again when a file is added to, removed from or renamed in
+the users or groups directory.
+It also reads them again after the clock is stepped.
+A file changed in place may not be read again until one of these
+happens, or until
+.Nm
+restarts.
+It writes a record to a new file, syncs it and renames it over the old
+one, so a crash leaves the old or the new record.
+Record files are mode 0600 and the directories 0700.
+After each change
+.Nm
+posts the directory service cache notifications for users and groups.
+.Ss Passwords
+A password is kept in the native attribute ShadowHashData.
+Its value is a binary property list with one key,
+SALTED-SHA512-PBKDF2, whose dictionary holds
+.Li entropy ,
+128 bytes of PBKDF2-HMAC-SHA512 output,
+.Li salt ,
+32 random bytes, and
+.Li iterations ,
+40000 for new passwords.
+AuthenticationAuthority is then
+.Li ;ShadowHash;HASHLIST:<SALTED-SHA512-PBKDF2>
+and passwd is
+.Li ******** .
+A record without ShadowHashData has no password.
+An AuthenticationAuthority that starts with
+.Li ;DisabledUser;
+disables the account.
+.Pp
+Password checks take as long for a missing user or a missing hash as
+for a wrong password.
+After five failed checks for one user, each further check must wait 2,
+4, 8, 16 and 32 seconds, then 60 seconds.
+A check made too soon fails with the account temporarily locked and the
+number of seconds left.
+A good password resets the count.
+The count is kept in memory, and is forgotten 15 minutes after the last
+failure.
+Failures for names that are not users are counted apart from those of
+users, so they cannot push a user's count out.
+A count is never dropped while its wait runs.
+A user's count that has reached five is kept until it is forgotten.
+.Ss Authorization
+.Nm
+takes the caller's identity from the audit token of each request.
+.Bl -bullet
+.It
+Anyone may read records.
+ShadowHashData is returned only to root, and only when asked for by name.
+.It
+Anyone may check a password and ask whether an account may log in.
+.It
+Root may change anything.
+A node with the credentials of root or of a member of the admin group may
+also change anything.
+.It
+A user may change their own password with the old one.
+Only root, or a node with the credentials of root or of a member of
+the admin group, may set a password without the old one.
+.It
+A user may change their own RealName, Building, PhoneNumber,
+HomePhoneNumber and Picture.
+.It
+A user may change their own UserShell to a shell listed in
+.Pa /etc/shells ,
+if their current shell is listed there too.
+Only root and the admin group may change a restricted shell, or a
+missing one.
+.El
+.Pp
+A node takes a user's credentials only with the right password, and
+not when the account is disabled or has expired.
+The credentials lapse when the account is disabled or expires, or when
+its password changes.
+The node then acts for its caller alone.
+.Ss Lookups
+Users and groups listed in
+.Pa /etc/passwd ,
+.Pa /etc/master.passwd
+or
+.Pa /etc/group
+are left out of the user and group lists, since the C library lists those
+files too.
+They are still found by name and number.
+A group list starts with the user's primary group.
+Group membership comes from GroupMembership, GroupMembers, the primary
+group and NestedGroups.
+Every user is a member of the group with number 12.
+.Ss The kernel's identity resolver
+The kernel checks access control lists by GUID.
+.Nm
+registers with the kernel as its identity resolver.
+Then the entries that
+.Xr chmod 1
+adds for users and groups match.
+A thread answers the kernel's requests.
+It turns a user or group number, GUID, NT SID or name into the others,
+and says whether a user is a member of a group.
+Membership is found as for the membership calls, nested groups included.
+A user number with no record is a member of no group.
+A user or group without a GeneratedUID has a GUID made from its number.
+The NT SID is the SMBSID attribute, where a record has one.
+.Pp
+.Nm
+clears the kernel's cache when it registers, after each change it makes,
+and again a second later.
+The kernel keeps most answers for up to 300 seconds, and some until its
+cache is cleared.
+After editing the record files by hand, restart
+.Nm .
+The thread reads the records on its own, so a slow request to the other
+services does not hold up the kernel.
+.Pp
+Only root may register.
+If registration fails,
+.Nm
+logs it and serves the other services.
+If the kernel drops it, it registers again, up to five times in a row.
+On
+.Dv SIGTERM
+or
+.Dv SIGINT
+it deregisters and exits.
+.Ss Limits
+A request to the Open Directory API may be at most 1 MiB.
+A request that is larger, that does not parse, or that would take more
+than 64 KiB plus 32 times its size in memory fails with a parameter error.
+A change that would make a record file larger than 1 MiB fails with a
+schema error, and the record stays as it was.
+UserShell, RealName, Building, PhoneNumber, HomePhoneNumber and Picture
+take at most 16 values of at most 1024 bytes each.
+.Sh FILES
+.Bl -tag -width Ds -compact
+.It Pa /var/db/dslocal/nodes/Default/users
+user records
+.It Pa /var/db/dslocal/nodes/Default/groups
+group records
+.It Pa /etc/shells
+the shells a user may choose
+.El
+.Sh SEE ALSO
+.Xr dscl 1 ,
+.Xr getpwnam 3 ,
+.Xr mbr_check_membership 3

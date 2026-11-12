@@ -1,0 +1,140 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 The Blueberry Pie OS Authors
+.Dd November 11, 2026
+.Dt DSCL 1
+.Os
+.Sh NAME
+.Nm dscl
+.Nd read and change directory records
+.Sh SYNOPSIS
+.Nm
+.Op Fl plist
+.Ar node
+.Fl read
+.Ar path
+.Op Ar key ...
+.Nm
+.Op Fl plist
+.Ar node
+.Fl list
+.Ar path
+.Op Ar key
+.Nm
+.Ar node
+.Fl create
+.Ar path
+.Op Ar key Op Ar value ...
+.Nm
+.Ar node
+.Fl append
+.Ar path key value ...
+.Nm
+.Ar node
+.Fl delete
+.Ar path
+.Op Ar key Op Ar value ...
+.Nm
+.Ar node
+.Fl passwd
+.Ar path
+.Op Ar new_password | old_password new_password
+.Sh DESCRIPTION
+.Nm
+reads and changes the records that
+.Xr opendirectoryd 8
+keeps.
+The daemon decides who may change what.
+.Pp
+.Ar node
+is a node name, such as
+.Pa /Local/Default
+or
+.Pa /Search .
+A dot or
+.Li localhost
+means
+.Pa /Local/Default .
+.Ar path
+is
+.Pa / Ns Ar type Ns Pa / Ns Ar name ,
+such as
+.Pa /Users/pie
+or
+.Pa /Groups/admin ,
+or
+.Pa / Ns Ar type
+for
+.Fl list .
+.Ar key
+is an attribute name.
+A standard name may be given without its
+.Li dsAttrTypeStandard:
+prefix.
+Any other name without a prefix is taken as
+.Li dsAttrTypeNative: Ns Ar key .
+The commands may also be given without their dash.
+.Bl -tag -width Ds
+.It Fl read Ar path Op Ar key ...
+Print the record's attributes, or only the keys given, one per line
+in the form
+.Ar key Ns : Ar values .
+Standard names are printed without their prefix.
+If a value is empty or holds a space, each value goes on a line of its
+own, after a space.
+Data is printed in hex.
+.It Fl list Ar path Op Ar key
+Print the names of the records of a type, sorted, with the values of
+.Ar key
+after each name.
+.Fl list Pa /
+prints the record types.
+.It Fl create Ar path Op Ar key Op Ar value ...
+Create the record if it does not exist.
+With a key, set the attribute to the values given, replacing any it has,
+or to one empty value.
+A new user gets a GeneratedUID and a random password.
+.It Fl append Ar path key value ...
+Add the values to the attribute.
+.It Fl delete Ar path Op Ar key Op Ar value ...
+Delete the record, the attribute or the values given.
+.It Fl passwd Ar path Op Ar new_password | old_password new_password
+Set a user's password.
+With no password given,
+.Nm
+asks for the old one, unless run by root, and for the new one twice.
+Passwords on the command line are visible to other users.
+.El
+.Pp
+With
+.Fl plist ,
+.Fl read
+and
+.Fl list
+print an XML property list, with the full attribute names.
+.Sh EXIT STATUS
+.Nm
+exits 0 on success, 1 on an error and 2 on a usage error.
+.Fl read
+also exits 1 when a key it was asked for is missing.
+.Sh EXAMPLES
+Show a user:
+.Dl dscl . -read /Users/pie
+.Pp
+List the users with their numbers:
+.Dl dscl . -list /Users UniqueID
+.Pp
+As root, add a user and make them an administrator:
+.Bd -literal -offset indent
+dscl . -create /Users/ann
+dscl . -create /Users/ann UniqueID 502
+dscl . -create /Users/ann PrimaryGroupID 20
+dscl . -create /Users/ann NFSHomeDirectory /Users/ann
+dscl . -create /Users/ann UserShell /bin/sh
+dscl . -create /Users/ann RealName "Ann Example"
+dscl . -passwd /Users/ann
+dscl . -append /Groups/admin GroupMembership ann
+.Ed
+.Sh SEE ALSO
+.Xr opendirectoryd 8
+.Sh BUGS
+There is no interactive mode, and no way to give credentials for a node.
