@@ -8,6 +8,10 @@
  *        dscl node -append path key value ...
  *        dscl node -delete path [key [value ...]]
  *        dscl node -passwd path [new_password | old_password new_password]
+ *        dscl -f DIR -create|-append|-delete|-passwd path ...
+ *
+ * With -f, the commands work on the dslocal node directory DIR without
+ * opendirectoryd.
  */
 #include <CFOpenDirectory/CFOpenDirectory.h>
 #include <CoreFoundation/CoreFoundation.h>
@@ -19,6 +23,7 @@
 #include <unistd.h>
 
 #include "od.h"
+#include "offline.h"
 
 static bool plist_output;
 static const char *cmd_name;
@@ -33,7 +38,8 @@ usage(void)
 	    "       dscl node -create path [key [value ...]]\n"
 	    "       dscl node -append path key value ...\n"
 	    "       dscl node -delete path [key [value ...]]\n"
-	    "       dscl node -passwd path [new_password | old_password new_password]\n");
+	    "       dscl node -passwd path [new_password | old_password new_password]\n"
+	    "       dscl -f DIR -create|-append|-delete|-passwd path ...\n");
 	exit(2);
 }
 
@@ -648,6 +654,27 @@ main(int argc, char *argv[])
 		plist_output = true;
 		argv++;
 		argc--;
+	}
+	if (argc >= 4 && strcmp(argv[0], "-f") == 0 && !plist_output) {
+		char rtype[600], rname[512], *slash;
+		const char *p = argv[3];
+
+		c = argv[2][0] == '-' ? argv[2] + 1 : argv[2];
+		if (p[0] != '/' || (slash = strchr(p + 1, '/')) == NULL || slash[1] == '\0' ||
+		    strchr(slash + 1, '/') != NULL || (size_t)(slash - p) >= sizeof(rname)) {
+			fprintf(stderr, "dscl: %s: not a record path\n", p);
+			return 1;
+		}
+		snprintf(rname, sizeof(rname), "%.*s", (int)(slash - p - 1), p + 1);
+		if (strncmp(rname, "dsRecType", 9) == 0) {
+			snprintf(rtype, sizeof(rtype), "%s", rname);
+		} else {
+			snprintf(rtype, sizeof(rtype), "%s%s", OD_RECSTD, rname);
+		}
+		if ((strcmp(c, "append") == 0 && argc < 6) || (strcmp(c, "passwd") == 0 && argc > 5)) {
+			usage();
+		}
+		return offline_main(argv[1], c, p, rtype, slash + 1, argc - 4, argv + 4);
 	}
 	if (argc < 3) {
 		usage();

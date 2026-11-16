@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 The Blueberry Pie OS Authors
-.Dd November 11, 2026
+.Dd November 16, 2026
 .Dt DSCL 1
 .Os
 .Sh NAME
@@ -38,12 +38,35 @@
 .Fl passwd
 .Ar path
 .Op Ar new_password | old_password new_password
+.Nm
+.Fl f Ar dir
+.Fl create | append | delete | passwd
+.Ar path ...
 .Sh DESCRIPTION
 .Nm
 reads and changes the records that
 .Xr opendirectoryd 8
 keeps.
 The daemon decides who may change what.
+.Pp
+With
+.Fl f ,
+.Nm
+changes the records in the dslocal node directory
+.Ar dir ,
+such as
+.Pa /var/db/dslocal/nodes/Default
+on another volume, without the daemon, with the caller's rights.
+It takes the
+.Fl create ,
+.Fl append ,
+.Fl delete
+and
+.Fl passwd
+commands.
+.Fl passwd
+without a password asks for it twice on the terminal, or reads one line
+from the standard input if that is not a terminal.
 .Pp
 .Ar node
 is a node name, such as

@@ -1,3 +1,10 @@
+opendirectoryd (3) blueberry-pie-os; urgency=medium
+
+  * dscl -f DIR changes the records in a dslocal node directory without
+    opendirectoryd, such as a data set that is not running yet.
+
+ -- Maxwell <maxwell@blueberrypieos.com>  Mon, 16 Nov 2026 20:27:22 +0000
+
 opendirectoryd (2) blueberry-pie-os; urgency=medium
 
   * Build-Depend on pietoolchain-host and pietoolchain-sdk.

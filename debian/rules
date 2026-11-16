@@ -12,7 +12,8 @@ opendirectoryd_SRCS := $(addprefix opendirectoryd/,api.c attrmap.c backoff.c loo
 opendirectoryd_DIR := usr/libexec
 opendirectoryd_FLAGS := -std=gnu11
 opendirectoryd_MANS := opendirectoryd/opendirectoryd.8:man8
-dscl_SRCS := dscl/dscl.c opendirectoryd/attrmap.c
+dscl_SRCS := dscl/dscl.c dscl/offline.c $(addprefix opendirectoryd/,api.c attrmap.c backoff.c \
+	lookup.c plist.c resolver.c shadow.c store.c util.c)
 dscl_DIR := usr/bin
 dscl_FLAGS := -std=gnu11 -I$(SRCROOT)/opendirectoryd -F$(CFOD_FRAMEWORKS)
 dscl_LIBS := -F$(CFOD_FRAMEWORKS) -framework CFOpenDirectory -framework CoreFoundation
